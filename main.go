@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/gorilla/websocket"
 	_ "modernc.org/sqlite"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -20,10 +21,57 @@ import (
 //go:embed index.html
 var static embed.FS
 
+//go:embed seed.json
+var seedJSON []byte
+
 var (
 	db        *sql.DB
 	jwtKey    []byte
+	upgrader  = websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
+	hub       = &Hub{clients: make(map[*Client]bool), broadcast: make(chan []byte, 256), register: make(chan *Client), unregister: make(chan *Client)}
 )
+
+type Client struct {
+	conn *websocket.Conn
+	send chan []byte
+	id   string
+}
+
+type Hub struct {
+	clients    map[*Client]bool
+	broadcast  chan []byte
+	register   chan *Client
+	unregister chan *Client
+}
+
+func (h *Hub) run() {
+	for {
+		select {
+		case c := <-h.register:
+			h.clients[c] = true
+		case c := <-h.unregister:
+			if _, ok := h.clients[c]; ok {
+				delete(h.clients, c)
+				close(c.send)
+			}
+		case msg := <-h.broadcast:
+			for c := range h.clients {
+				select {
+				case c.send <- msg:
+				default:
+					close(c.send)
+					delete(h.clients, c)
+				}
+			}
+		}
+	}
+}
+
+func genID() string {
+	b := make([]byte, 4)
+	rand.Read(b)
+	return hex.EncodeToString(b)
+}
 
 type State struct {
 	Nodes []Node `json:"nodes"`
@@ -39,8 +87,8 @@ type Node struct {
 	Border  bool     `json:"border"`
 	Nico    bool     `json:"nico"`
 	Lea     bool     `json:"lea"`
-	X       float64  `json:"x"`
-	Y       float64  `json:"y"`
+	X       *float64 `json:"x,omitempty"`
+	Y       *float64 `json:"y,omitempty"`
 }
 
 type Link struct {
@@ -59,12 +107,16 @@ func main() {
 	defer db.Close()
 
 	initDB()
+	seedDB()
 	initUser()
 	initJWT()
+
+	go hub.run()
 
 	http.HandleFunc("GET /api/state", authMiddleware(handleGetState))
 	http.HandleFunc("PUT /api/state", authMiddleware(handlePutState))
 	http.HandleFunc("POST /api/login", handleLogin)
+	http.HandleFunc("GET /ws", handleWS)
 	http.HandleFunc("GET /", handleStatic)
 
 	port := os.Getenv("PORT")
@@ -85,6 +137,24 @@ func initDB() {
 		username TEXT UNIQUE NOT NULL,
 		hash TEXT NOT NULL
 	)`)
+}
+
+func seedDB() {
+	var count int
+	db.QueryRow("SELECT COUNT(*) FROM state").Scan(&count)
+	if count > 0 {
+		return
+	}
+	var s State
+	if err := json.Unmarshal(seedJSON, &s); err != nil {
+		log.Printf("seed error: %v", err)
+		return
+	}
+	raw, _ := json.Marshal(s)
+	_, err := db.Exec("INSERT INTO state (id, data) VALUES (1, ?)", string(raw))
+	if err != nil {
+		log.Printf("seed insert error: %v", err)
+	}
 }
 
 func initUser() {
@@ -199,5 +269,61 @@ func authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 		next(w, r)
+	}
+}
+
+func handleWS(w http.ResponseWriter, r *http.Request) {
+	token := r.URL.Query().Get("token")
+	_, err := jwt.Parse(token, func(t *jwt.Token) (interface{}, error) {
+		return jwtKey, nil
+	})
+	if err != nil {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	conn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		return
+	}
+	c := &Client{conn: conn, send: make(chan []byte, 256), id: genID()}
+	hub.register <- c
+	go c.writePump()
+	go c.readPump()
+}
+
+func (c *Client) writePump() {
+	defer c.conn.Close()
+	for msg := range c.send {
+		c.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+		if err := c.conn.WriteMessage(websocket.TextMessage, msg); err != nil {
+			break
+		}
+	}
+}
+
+func (c *Client) readPump() {
+	defer func() {
+		hub.unregister <- c
+		c.conn.Close()
+	}()
+	c.conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+	c.conn.SetPongHandler(func(string) error {
+		c.conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+		return nil
+	})
+	for {
+		_, msg, err := c.conn.ReadMessage()
+		if err != nil {
+			break
+		}
+		var data map[string]interface{}
+		if json.Unmarshal(msg, &data) != nil {
+			continue
+		}
+		data["id"] = c.id
+		raw, _ := json.Marshal(data)
+		if raw != nil {
+			hub.broadcast <- raw
+		}
 	}
 }

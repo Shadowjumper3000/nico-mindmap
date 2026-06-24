@@ -48,6 +48,11 @@
   #panel .row button{flex:1;min-width:84px}
   .danger{border-color:#7f1d1d!important;color:#fca5a5}
   #hint{position:fixed;bottom:10px;left:14px;font-size:12px;color:var(--muted);z-index:10}
+  #cursors{position:fixed;inset:0;z-index:15;pointer-events:none}
+  .rcursor{position:absolute;transform:translate(-50%,-50%);display:flex;align-items:center;gap:5px;
+    transition:left .06s linear,top .06s linear}
+  .rcursor .dot{width:8px;height:8px;border-radius:50%;background:var(--c4);box-shadow:0 0 6px var(--c4)}
+  .rcursor .lbl{font-size:11px;color:#fff;background:rgba(0,0,0,.65);padding:2px 8px;border-radius:10px;white-space:nowrap}
   #gate{position:fixed;inset:0;background:#0b0e13;z-index:100;display:flex;align-items:center;justify-content:center}
   .gatebox{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:28px;width:300px;text-align:center;
     box-shadow:0 20px 50px rgba(0,0,0,.5)}
@@ -98,6 +103,7 @@
   <div class="row"><button id="pDelete" class="danger">Löschen</button></div>
 </div>
 
+<div id="cursors"></div>
 <div id="hint">Knoten ziehen = verschieben · auf andere Bubble ziehen = verbinden/lösen · Scrollen = zoomen · Verbindung anklicken = kommentieren</div>
 
 <script>
@@ -401,7 +407,7 @@ async function tryLogin(){
   try{
     const r=await fetch("/api/login",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({password:gpw.value})});
     if(!r.ok)throw new Error();
-    const d=await r.json(); token=d.token; gate.style.display="none"; startApp();
+    const d=await r.json(); token=d.token; gate.style.display="none"; startApp(); connectWS();
   }catch(e){
     gerr.textContent="Falsches Passwort"; gpw.value=""; gpw.focus();
   }
@@ -409,6 +415,45 @@ async function tryLogin(){
 gbtn.onclick=tryLogin;
 gpw.addEventListener("keydown",e=>{if(e.key==="Enter")tryLogin();});
 gpw.focus();
+
+// ---------- Cursor Sharing (WebSocket) ----------
+const CID=Math.random().toString(36).slice(2,10);
+let ws=null, wsTimer=null, rcursors={}, lastCS=0;
+
+function connectWS(){
+  if(!token)return;
+  const proto=location.protocol==="https:"?"wss:":"ws:";
+  ws=new WebSocket(proto+"//"+location.host+"/ws?token="+token);
+  ws.onmessage=e=>{
+    try{
+      const m=JSON.parse(e.data);
+      if(m.id===CID||m.type!=="cursor")return;
+      let el=rcursors[m.id];
+      if(!el){el=document.createElement("div");el.className="rcursor";
+        el.innerHTML='<span class="dot"></span><span class="lbl"></span>';
+        document.getElementById("cursors").appendChild(el);rcursors[m.id]=el;}
+      el.style.left=m.x+"px";el.style.top=m.y+"px";
+      el.querySelector(".lbl").textContent=m.label||"";
+    }catch(_){}
+  };
+  ws.onclose=()=>{
+    Object.values(rcursors).forEach(e=>e.remove());
+    rcursors={};wsTimer=setTimeout(connectWS,2000);
+  };
+}
+document.addEventListener("mousemove",e=>{
+  const now=Date.now();
+  if(now-lastCS<40||!ws||ws.readyState!==WebSocket.OPEN)return;
+  lastCS=now;
+  // detect hovered node in scene coords
+  const pt=d3.pointer(e,document.querySelector("#scene"));
+  let label="";
+  for(const n of state.nodes){
+    const dx=pt[0]-n.x,dy=pt[1]-n.y;
+    if(Math.abs(dx)<nodeW(n)/2&&Math.abs(dy)<nodeH(n)/2){label=n.label;break;}
+  }
+  ws.send(JSON.stringify({type:"cursor",x:e.clientX,y:e.clientY,label}));
+});
 </script>
 </body>
 </html>
