@@ -23,7 +23,7 @@ jobs:
           JWT_SECRET: ${{ secrets.JWT_SECRET }}
         run: |
           ssh -o StrictHostKeyChecking=no $USER@$HOST "mkdir -p nico-mindmap"
-          scp -o StrictHostKeyChecking=no nicolas main.go go.mod go.sum index.html $USER@$HOST:nico-mindmap/
+          scp -o StrictHostKeyChecking=no nicolas main.go go.mod go.sum seed.json index.html $USER@$HOST:nico-mindmap/
           ssh -o StrictHostKeyChecking=no $USER@$HOST "
             cd nico-mindmap
             docker build -f nicolas -t nico-mindmap .
