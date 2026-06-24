@@ -1,0 +1,37 @@
+name: deploy
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup SSH
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.VPS_SSH_KEY }}
+
+      - name: Deploy
+        env:
+          HOST: ${{ secrets.VPS_IP }}
+          USER: ${{ secrets.VPS_USER }}
+          AUTH_PASSWORD: ${{ secrets.AUTH_PASSWORD }}
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+        run: |
+          ssh -o StrictHostKeyChecking=no $USER@$HOST "mkdir -p nico-mindmap"
+          scp -o StrictHostKeyChecking=no nicolas main.go go.mod go.sum index.html $USER@$HOST:nico-mindmap/
+          ssh -o StrictHostKeyChecking=no $USER@$HOST "
+            cd nico-mindmap
+            docker build -f nicolas -t nico-mindmap .
+            docker rm -f nico-mindmap 2>/dev/null || true
+            docker run -d --name nico-mindmap \
+              --network proxy \
+              -e AUTH_PASSWORD='$AUTH_PASSWORD' \
+              -e JWT_SECRET='$JWT_SECRET' \
+              --restart unless-stopped \
+              nico-mindmap
+          "

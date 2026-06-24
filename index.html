@@ -156,17 +156,21 @@ const SEED={
   ].map(([s,t])=>({source:s,target:t,kind:"tree",comment:""}))
 };
 
-const KEY="thesis_mindmap_v5";
-function load(){try{const r=localStorage.getItem(KEY);if(r)return JSON.parse(r);}catch(e){}
-  return JSON.parse(JSON.stringify(SEED));}
-function save(){try{localStorage.setItem(KEY,JSON.stringify(
-  {nodes:state.nodes.map(n=>({id:n.id,label:n.label,group:n.group,comment:n.comment||"",
-     color:n.color||null,border:!!n.border,nico:!!n.nico,lea:!!n.lea,x:n.x,y:n.y})),
-   links:state.links.map(l=>({source:l.source.id||l.source,target:l.target.id||l.target,kind:l.kind,comment:l.comment||""}))}
-));}catch(e){}}
+let token="";
+let state=JSON.parse(JSON.stringify(SEED));
+let nextId=1, hasPositions=false;
 
-let state=load();
-let nextId=1, hasPositions=state.nodes.every(n=>typeof n.x==="number");
+async function fetchState(){
+  try{const r=await fetch("/api/state",{headers:{"Authorization":"Bearer "+token}});
+    if(r.ok)return await r.json();}catch(e){}
+  return JSON.parse(JSON.stringify(SEED));
+}
+function save(){
+  const data={nodes:state.nodes.map(n=>({id:n.id,label:n.label,group:n.group,comment:n.comment||"",
+    color:n.color||null,border:!!n.border,nico:!!n.nico,lea:!!n.lea,x:n.x,y:n.y})),
+    links:state.links.map(l=>({source:l.source.id||l.source,target:l.target.id||l.target,kind:l.kind,comment:l.comment||""}))};
+  fetch("/api/state",{method:"PUT",headers:{"Authorization":"Bearer "+token,"Content-Type":"application/json"},body:JSON.stringify(data)}).catch(()=>{});
+}
 
 const svg=d3.select("#svg"), scene=d3.select("#scene");
 const W=()=>window.innerWidth, H=()=>window.innerHeight;
@@ -366,7 +370,7 @@ window.addEventListener("keydown",e=>{if(e.key==="Escape")deselect();});
 document.getElementById("addBtn").onclick=()=>addChild(selNode||state.nodes.find(n=>n.id==="root"));
 document.getElementById("resetBtn").onclick=()=>{
   if(!confirm("Alle Änderungen verwerfen und Original wiederherstellen?"))return;
-  try{localStorage.removeItem(KEY);}catch(e){} state=JSON.parse(JSON.stringify(SEED));
+  state=JSON.parse(JSON.stringify(SEED));
   state.nodes.forEach(n=>{n.x=n.y=undefined;}); deselect(); relayout(); centerRoot();};
 document.getElementById("fitBtn").onclick=centerRoot;
 
@@ -380,24 +384,30 @@ function centerRoot(){
 }
 
 let started=false;
-function startApp(){
+async function startApp(){
   if(started)return; started=true;
+  state=await fetchState();
+  hasPositions=state.nodes.every(n=>typeof n.x==="number");
   if(hasPositions){ computeDeg(); pinRoot(); state.nodes.forEach(n=>{n.fx=n.x;n.fy=n.y;});
     buildDOM(); updatePositions(); }
   else { relayout(); }
   setTimeout(centerRoot,200);
 }
 
-// ---------- Passwortschutz ----------
-const PW="NicoTici";
+// ---------- Login ----------
 const gate=document.getElementById("gate"), gpw=document.getElementById("gpw"),
       gbtn=document.getElementById("gbtn"), gerr=document.getElementById("gerr");
-function tryPw(){
-  if(gpw.value===PW){ gate.style.display="none"; startApp(); }
-  else { gerr.textContent="Falsches Passwort"; gpw.value=""; gpw.focus(); }
+async function tryLogin(){
+  try{
+    const r=await fetch("/api/login",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({password:gpw.value})});
+    if(!r.ok)throw new Error();
+    const d=await r.json(); token=d.token; gate.style.display="none"; startApp();
+  }catch(e){
+    gerr.textContent="Falsches Passwort"; gpw.value=""; gpw.focus();
+  }
 }
-gbtn.onclick=tryPw;
-gpw.addEventListener("keydown",e=>{if(e.key==="Enter")tryPw();});
+gbtn.onclick=tryLogin;
+gpw.addEventListener("keydown",e=>{if(e.key==="Enter")tryLogin();});
 gpw.focus();
 </script>
 </body>
