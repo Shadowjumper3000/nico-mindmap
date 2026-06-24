@@ -66,8 +66,11 @@
 <body>
 <div id="gate"><div class="gatebox">
   <h2>🔒 Geschützt</h2>
-  <input id="gpw" type="password" placeholder="Passwort" autocomplete="off">
-  <button id="gbtn">Öffnen</button>
+  <form id="lform" onsubmit="return false;">
+    <input id="guser" type="text" name="username" autocomplete="username" style="display:none" value="admin">
+    <input id="gpw" type="password" name="password" placeholder="Passwort" autocomplete="current-password">
+    <button id="gbtn" type="submit">Öffnen</button>
+  </form>
   <div id="gerr"></div>
 </div></div>
 
@@ -402,7 +405,8 @@ async function startApp(){
 
 // ---------- Login / Auto-Login ----------
 const gate=document.getElementById("gate"), gpw=document.getElementById("gpw"),
-      gbtn=document.getElementById("gbtn"), gerr=document.getElementById("gerr");
+      gbtn=document.getElementById("gbtn"), gerr=document.getElementById("gerr"),
+      lform=document.getElementById("lform");
 async function tryLogin(){
   try{
     const r=await fetch("/api/login",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({password:gpw.value})});
@@ -420,8 +424,7 @@ async function autoLogin(){
   }catch(e){gpw.focus();}
 }
 autoLogin();
-gbtn.onclick=tryLogin;
-gpw.addEventListener("keydown",e=>{if(e.key==="Enter")tryLogin();});
+lform.addEventListener("submit",e=>{e.preventDefault();tryLogin();});
 
 // ---------- Cursor Sharing + Hot Reload (WebSocket) ----------
 let CID=null, ws=null, wsTimer=null, rcursors={}, lastCS=0;
