@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Thesis – Interaktive Mindmap</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
+<style>
+  :root{
+    --bg:#0f1419; --panel:#1a2230; --ink:#e8edf4; --muted:#8a97a8;
+    --root:#6d5dfc; --c1:#2dd4bf; --c2:#f59e0b; --c3:#ec4899; --c4:#38bdf8; --c5:#a3e635;
+    --c6:#fb7185; --c7:#22d3ee; --c8:#c084fc; --c9:#facc15; --c10:#34d399; --c11:#f97316;
+    --line:#3a4658;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;overflow:hidden}
+  #bar{position:fixed;top:0;left:0;right:0;min-height:52px;display:flex;align-items:center;
+    gap:10px;flex-wrap:wrap;padding:8px 14px;background:rgba(15,20,25,.9);
+    backdrop-filter:blur(8px);border-bottom:1px solid var(--line);z-index:20}
+  #bar h1{font-size:15px;font-weight:600;margin:0;margin-right:6px}
+  button{background:var(--panel);color:var(--ink);border:1px solid var(--line);
+    padding:7px 11px;border-radius:8px;font-size:13px;cursor:pointer}
+  button:hover{border-color:var(--root)}
+  button.active{background:var(--root);border-color:var(--root)}
+  .legend{font-size:12px;color:var(--muted);margin-left:auto}
+  svg{position:fixed;inset:0;width:100%;height:100%;display:block}
+  .vis{stroke:var(--line);stroke-width:2;stroke-opacity:.7;pointer-events:none}
+  .hit{stroke:transparent;stroke-width:16;cursor:pointer}
+  .lsel{stroke:var(--ink);stroke-opacity:1;stroke-width:3!important}
+  .node{cursor:pointer}
+  .node rect{transition:filter .12s}
+  .node:hover rect{filter:brightness(1.18)}
+  .node text.lbl{fill:#0b0e13;font-weight:600;text-anchor:middle;dominant-baseline:middle;pointer-events:none}
+  .node.sel rect{stroke:#fff;stroke-width:2.5}
+  .badge{font-size:13px;pointer-events:none}
+  .lcomment{font-size:12px;fill:var(--ink);font-weight:600;text-anchor:middle;pointer-events:none;
+    paint-order:stroke;stroke:var(--bg);stroke-width:4px;stroke-linejoin:round}
+  #panel{position:fixed;top:60px;right:12px;width:280px;background:var(--panel);
+    border:1px solid var(--line);border-radius:12px;padding:14px;z-index:30;display:none;
+    box-shadow:0 10px 30px rgba(0,0,0,.4)}
+  #panel h3{margin:0 0 10px;font-size:14px}
+  #panel label{font-size:11px;color:var(--muted);display:block;margin:8px 0 4px}
+  #panel input,#panel textarea{width:100%;background:#0f1419;color:var(--ink);
+    border:1px solid var(--line);border-radius:7px;padding:7px;font-size:13px;font-family:inherit}
+  #panel textarea{height:70px;resize:vertical}
+  #panel .row{display:flex;gap:6px;margin-top:10px;flex-wrap:wrap}
+  #panel .row button{flex:1;min-width:84px}
+  .danger{border-color:#7f1d1d!important;color:#fca5a5}
+  #hint{position:fixed;bottom:10px;left:14px;font-size:12px;color:var(--muted);z-index:10}
+  #gate{position:fixed;inset:0;background:#0b0e13;z-index:100;display:flex;align-items:center;justify-content:center}
+  .gatebox{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:28px;width:300px;text-align:center;
+    box-shadow:0 20px 50px rgba(0,0,0,.5)}
+  .gatebox h2{margin:0 0 16px;font-size:18px}
+  .gatebox input{width:100%;background:#0f1419;color:var(--ink);border:1px solid var(--line);
+    border-radius:8px;padding:10px;font-size:14px;margin-bottom:10px}
+  .gatebox button{width:100%;background:var(--root);border:none;color:#fff;font-weight:700;padding:10px;border-radius:8px}
+  #gerr{color:#fca5a5;font-size:13px;height:16px;margin-top:8px}
+</style>
+</head>
+<body>
+<div id="gate"><div class="gatebox">
+  <h2>🔒 Geschützt</h2>
+  <input id="gpw" type="password" placeholder="Passwort" autocomplete="off">
+  <button id="gbtn">Öffnen</button>
+  <div id="gerr"></div>
+</div></div>
+
+<div id="bar">
+  <h1>🧠 Thesis – Mindmap</h1>
+  <button id="addBtn">+ Knoten</button>
+  <button id="fitBtn">Zentrieren</button>
+  <button id="resetBtn" class="danger">Zurücksetzen</button>
+  <div class="legend">💬 = Kommentar · Bubble über eine andere ziehen = verbinden / lösen</div>
+</div>
+
+<svg id="svg"><g id="scene">
+  <g id="linkLayer"></g><g id="nodeLayer"></g>
+</g></svg>
+
+<div id="panel">
+  <h3 id="pTitle">Knoten bearbeiten</h3>
+  <div id="pLabelWrap"><label>Text</label><input id="pLabel" type="text"></div>
+  <label>Kommentar</label>
+  <textarea id="pComment" placeholder="Notiz / Kommentar…"></textarea>
+  <div id="pOpts">
+    <label>Farbe & Markierung</label>
+    <div class="row">
+      <input id="pColor" type="color" style="flex:0 0 40px;height:34px;padding:2px;cursor:pointer">
+      <button id="pBorder">▢ Umrandung</button>
+    </div>
+    <div class="row">
+      <button id="pNico">👨 Nico</button>
+      <button id="pLea">👩 Leaticia</button>
+    </div>
+  </div>
+  <div class="row" id="pRow1"><button id="pChild">+ Unterknoten</button></div>
+  <div class="row"><button id="pDelete" class="danger">Löschen</button></div>
+</div>
+
+<div id="hint">Knoten ziehen = verschieben · auf andere Bubble ziehen = verbinden/lösen · Scrollen = zoomen · Verbindung anklicken = kommentieren</div>
+
+<script>
+const COLORS={root:"--root",c1:"--c1",c2:"--c2",c3:"--c3",c4:"--c4",c5:"--c5",
+  c6:"--c6",c7:"--c7",c8:"--c8",c9:"--c9",c10:"--c10",c11:"--c11"};
+const PALETTE=["c1","c2","c3","c4","c5","c6","c7","c8","c9","c10","c11"];
+const cssv=v=>getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+
+const SEED={
+  nodes:[
+    {id:"root",label:"THESIS",group:"root"},
+    {id:"m",label:"Methodik / Analyse",group:"c1"},
+    {id:"m1",label:"Qualitative Analyse",group:"c1"},
+    {id:"m2",label:"Quantitative Analyse",group:"c1"},
+    {id:"m3",label:"scientific work",group:"c1"},
+    {id:"m4",label:"Transformer",group:"c1"},
+    {id:"m5",label:"How does it work?",group:"c1"},
+    {id:"m6",label:"Compute",group:"c1"},
+
+    {id:"v",label:"VC Basics",group:"c2"},
+    {id:"v1",label:"Stages",group:"c2"},
+    {id:"v2",label:"dilution",group:"c2"},
+    {id:"v3",label:"Ownership",group:"c2"},
+
+    {id:"s",label:"Start-Up Models",group:"c3"},
+    {id:"s1",label:"US start up market",group:"c3"},
+    {id:"s2",label:"EU start up market",group:"c3"},
+    {id:"s3",label:"Investor base",group:"c3"},
+    {id:"s4",label:"Business Models",group:"c3"},
+
+    {id:"i",label:"Investor control",group:"c4"},
+    {id:"i1",label:"Literatur",group:"c4"},
+    {id:"i2",label:"VC Start up financing",group:"c4"},
+    {id:"i3",label:"Cross border funding",group:"c4"},
+    {id:"i4",label:"AI Value Chain",group:"c4"},
+
+    {id:"e",label:"EU",group:"c5"},
+    {id:"e1",label:"National investments",group:"c5"},
+    {id:"e2",label:"proposed changes",group:"c5"},
+    {id:"e3",label:"Euro & Regulation",group:"c5"},
+    {id:"e4",label:"Energy",group:"c5"},
+    {id:"e5",label:"Infrastructure",group:"c5"},
+    {id:"e5a",label:"Money",group:"c5"},
+    {id:"e5b",label:"Knowledge",group:"c5"},
+    {id:"e5c",label:"Support",group:"c5"},
+    {id:"e6",label:"National Security (Sovereignty)",group:"c5"},
+    {id:"e7",label:"Globalisation: Euro vs. World",group:"c5"},
+  ],
+  links:[
+    ["root","m"],["m","m1"],["m","m2"],["m","m3"],["m","m4"],["m","m5"],["m","m6"],
+    ["root","v"],["v","v1"],["v","v2"],["v","v3"],
+    ["root","s"],["s","s1"],["s","s2"],["s","s3"],["s","s4"],
+    ["root","i"],["i","i1"],["i","i2"],["i","i3"],["i","i4"],
+    ["root","e"],["e","e1"],["e","e2"],["e","e3"],["e","e4"],["e","e5"],
+    ["e5","e5a"],["e5","e5b"],["e5","e5c"],["e","e6"],["e","e7"],
+  ].map(([s,t])=>({source:s,target:t,kind:"tree",comment:""}))
+};
+
+const KEY="thesis_mindmap_v5";
+function load(){try{const r=localStorage.getItem(KEY);if(r)return JSON.parse(r);}catch(e){}
+  return JSON.parse(JSON.stringify(SEED));}
+function save(){try{localStorage.setItem(KEY,JSON.stringify(
+  {nodes:state.nodes.map(n=>({id:n.id,label:n.label,group:n.group,comment:n.comment||"",
+     color:n.color||null,border:!!n.border,nico:!!n.nico,lea:!!n.lea,x:n.x,y:n.y})),
+   links:state.links.map(l=>({source:l.source.id||l.source,target:l.target.id||l.target,kind:l.kind,comment:l.comment||""}))}
+));}catch(e){}}
+
+let state=load();
+let nextId=1, hasPositions=state.nodes.every(n=>typeof n.x==="number");
+
+const svg=d3.select("#svg"), scene=d3.select("#scene");
+const W=()=>window.innerWidth, H=()=>window.innerHeight;
+const zoom=d3.zoom().scaleExtent([.2,3]).on("zoom",e=>scene.attr("transform",e.transform));
+svg.call(zoom).on("dblclick.zoom",null);
+
+const NH=27;
+let selNode=null, selLink=null;
+
+// ---------- Größe abhängig von Anzahl der Verbindungen ----------
+function computeDeg(){
+  // nur die Baum-Hierarchie zählt (Kinder), Querverbindungen NICHT
+  const kids={}; state.nodes.forEach(n=>kids[n.id]=[]);
+  state.links.forEach(l=>{ if(l.kind!=="tree")return;
+    const s=l.source.id||l.source,t=l.target.id||l.target; if(kids[s])kids[s].push(t); });
+  // gewichtete Nachkommen: direkte Kinder 100%, Enkel 50%, dann 25% ... (jede Bubble nur 1x)
+  function weight(id){
+    let w=0; const seen=new Set([id]); let q=[[id,0]];
+    while(q.length){const [c,d]=q.shift();
+      (kids[c]||[]).forEach(ch=>{ if(!seen.has(ch)){seen.add(ch); w+=Math.pow(0.5,d); q.push([ch,d+1]);} });}
+    return w;
+  }
+  const K=0.085, CAP=2.6;
+  state.nodes.forEach(n=>{ n._w=weight(n.id); n._scale=Math.min(1+n._w*K, CAP); });
+}
+function nextColor(){
+  const used=state.links.filter(l=>l.kind==="tree"&&(l.source.id||l.source)==="root")
+    .map(l=>{const t=l.target.id||l.target; const n=state.nodes.find(x=>x.id===t); return n&&n.group;});
+  for(const p of PALETTE){ if(!used.includes(p)) return p; }
+  return PALETTE[used.length%PALETTE.length];
+}
+function scaleOf(d){return d._scale||1;}
+function nodeW(d){return (d.label.length*7.4+34)*scaleOf(d);}
+function nodeH(d){return NH*scaleOf(d);}
+
+const sim=d3.forceSimulation(state.nodes)
+  .force("link",d3.forceLink(state.links).id(d=>d.id).distance(d=>d.kind==="cross"?175:120).strength(d=>d.kind==="cross"?.08:.85))
+  .force("charge",d3.forceManyBody().strength(-880))
+  .force("collide",d3.forceCollide().radius(d=>nodeW(d)/2+18))
+  .force("x",d3.forceX(0).strength(.05))
+  .force("y",d3.forceY(0).strength(.05))
+  .stop();
+
+function pinRoot(){const r=state.nodes.find(n=>n.id==="root");if(r){
+  if(typeof r.x!=="number"){r.x=0;r.y=0;} r.fx=r.x; r.fy=r.y; }}
+
+function relayout(){
+  computeDeg();
+  state.nodes.forEach(n=>{ if(n.id!=="root"){n.fx=null;n.fy=null;} });
+  pinRoot();
+  sim.nodes(state.nodes); sim.force("link").links(state.links); sim.alpha(1);
+  for(let i=0;i<340;i++) sim.tick();
+  state.nodes.forEach(n=>{ n.fx=n.x; n.fy=n.y; });
+  buildDOM(); updatePositions(); save();
+}
+
+function lkey(l){return (l.source.id||l.source)+"|"+(l.target.id||l.target)+"|"+l.kind;}
+function resolveLinks(){ const by={}; state.nodes.forEach(n=>by[n.id]=n);
+  state.links.forEach(l=>{ if(typeof l.source!=="object")l.source=by[l.source];
+    if(typeof l.target!=="object")l.target=by[l.target]; }); }
+
+function buildDOM(){
+  computeDeg(); resolveLinks();
+  let lk=scene.select("#linkLayer").selectAll("g.linkg").data(state.links,lkey);
+  lk.exit().remove();
+  const len=lk.enter().append("g").attr("class","linkg");
+  len.append("line").attr("class","hit").on("click",(e,d)=>{e.stopPropagation();onLinkClick(d);});
+  len.append("line").attr("class","vis");
+  len.append("text").attr("class","lcomment");
+  scene.select("#linkLayer").selectAll("g.linkg").select("line.vis")
+    .attr("class",d=>"vis"+(selLink===d?" lsel":""));
+
+  let nd=scene.select("#nodeLayer").selectAll("g.node").data(state.nodes,d=>d.id);
+  nd.exit().remove();
+  const en=nd.enter().append("g").attr("class","node")
+    .call(d3.drag().on("start",dstart).on("drag",dmove).on("end",dend))
+    .on("click",(e,d)=>{e.stopPropagation();onNodeClick(d);});
+  en.append("rect").attr("rx",9);
+  en.append("text").attr("class","lbl");
+  en.append("text").attr("class","badge");
+  scene.select("#nodeLayer").selectAll("g.node").each(function(d){
+    const g=d3.select(this), w=nodeW(d), h=nodeH(d), s=scaleOf(d), isRoot=d.id==="root";
+    g.attr("class","node"+(selNode&&selNode.id===d.id?" sel":""));
+    g.select("rect").attr("width",w).attr("height",h).attr("x",-w/2).attr("y",-h/2)
+      .attr("fill",d.color||cssv(COLORS[d.group]||"--root"))
+      .attr("stroke",d.border?"#ffd23f":null).attr("stroke-width",d.border?3:null);
+    g.select("text.lbl").attr("x",0).attr("y",0)
+      .style("font-size",13*s+"px").style("font-weight",isRoot?"800":"600")
+      .text(d.label);
+    let tag=(d.nico?"👨":"")+(d.lea?"👩":"")+(d.comment&&d.comment.trim()?"💬":"");
+    g.select(".badge").attr("x",w/2-2).attr("y",-h/2-2).text(tag);
+  });
+}
+
+function updatePositions(){
+  resolveLinks();
+  scene.select("#linkLayer").selectAll("g.linkg").each(function(d){
+    const g=d3.select(this), mx=(d.source.x+d.target.x)/2, my=(d.source.y+d.target.y)/2;
+    g.selectAll("line").attr("x1",d.source.x).attr("y1",d.source.y).attr("x2",d.target.x).attr("y2",d.target.y);
+    let ang=Math.atan2(d.target.y-d.source.y,d.target.x-d.source.x)*180/Math.PI;
+    if(ang>90)ang-=180; if(ang<-90)ang+=180;   // Text immer lesbar
+    g.select("text.lcomment").attr("transform",`translate(${mx},${my}) rotate(${ang})`)
+      .attr("x",0).attr("y",-7).text(d.comment&&d.comment.trim()?d.comment:"");
+  });
+  scene.select("#nodeLayer").selectAll("g.node").attr("transform",d=>`translate(${d.x},${d.y})`);
+}
+function refresh(){ buildDOM(); updatePositions(); save(); }
+
+// ---------- Drag ----------
+function dstart(e,d){ d._ox=d.x; d._oy=d.y; d.fx=d.x; d.fy=d.y; }
+function dmove(e,d){ d.fx=e.x; d.fy=e.y; d.x=e.x; d.y=e.y; updatePositions(); }
+function dend(e,d){
+  let target=null,best=1e9;
+  state.nodes.forEach(n=>{ if(n===d)return;
+    const dx=Math.abs(e.x-n.x), dy=Math.abs(e.y-n.y);
+    if(dx<nodeW(n)/2 && dy<nodeH(n)/2){ const dist=dx+dy; if(dist<best){best=dist;target=n;} }});
+  if(target){ d.x=d._ox; d.y=d._oy; d.fx=d._ox; d.fy=d._oy;  // über andere Bubble -> verbinden/lösen + zurückspringen
+    toggleLink(d,target); buildDOM(); updatePositions(); save(); }
+  else { d.fx=d.x; d.fy=d.y; save(); }
+}
+function toggleLink(a,b){
+  const ai=a.id,bi=b.id;
+  const idx=state.links.findIndex(l=>{const s=l.source.id||l.source,t=l.target.id||l.target;
+    return (s===ai&&t===bi)||(s===bi&&t===ai);});
+  if(idx>=0) state.links.splice(idx,1);
+  else state.links.push({source:ai,target:bi,kind:"cross",comment:""});
+}
+
+// ---------- Interaktion ----------
+function onNodeClick(d){ selLink=null; selNode=d; openNodePanel(d); refresh(); }
+function onLinkClick(d){ selNode=null; selLink=d; openLinkPanel(d); refresh(); }
+function deselect(){selNode=null;selLink=null;document.getElementById("panel").style.display="none";refresh();}
+svg.on("click",()=>deselect());
+
+const panel=document.getElementById("panel");
+const pTitle=document.getElementById("pTitle"), pLabel=document.getElementById("pLabel"), pComment=document.getElementById("pComment");
+const pLabelWrap=document.getElementById("pLabelWrap"), pRow1=document.getElementById("pRow1");
+const pOpts=document.getElementById("pOpts"), pColor=document.getElementById("pColor");
+const pBorder=document.getElementById("pBorder"), pNico=document.getElementById("pNico"), pLea=document.getElementById("pLea");
+
+function openNodePanel(d){
+  panel.style.display="block"; pTitle.textContent="Knoten bearbeiten";
+  pLabelWrap.style.display="block"; pRow1.style.display="flex"; pOpts.style.display="block";
+  pLabel.value=d.label; pComment.value=d.comment||"";
+  pColor.value=d.color||cssv(COLORS[d.group]||"--root");
+  pBorder.classList.toggle("active",!!d.border);
+  pNico.classList.toggle("active",!!d.nico);
+  pLea.classList.toggle("active",!!d.lea);
+}
+function openLinkPanel(d){
+  panel.style.display="block"; pTitle.textContent="Verbindung kommentieren";
+  pLabelWrap.style.display="none"; pRow1.style.display="none"; pOpts.style.display="none";
+  pComment.value=d.comment||"";
+}
+pColor.addEventListener("input",()=>{if(selNode){selNode.color=pColor.value;refresh();}});
+pBorder.onclick=()=>{if(selNode){selNode.border=!selNode.border;pBorder.classList.toggle("active",!!selNode.border);refresh();}};
+pNico.onclick=()=>{if(selNode){selNode.nico=!selNode.nico;pNico.classList.toggle("active",!!selNode.nico);refresh();}};
+pLea.onclick=()=>{if(selNode){selNode.lea=!selNode.lea;pLea.classList.toggle("active",!!selNode.lea);refresh();}};
+pLabel.addEventListener("input",()=>{if(selNode){selNode.label=pLabel.value;refresh();}});
+pComment.addEventListener("input",()=>{const t=selNode||selLink;if(t){t.comment=pComment.value;refresh();}});
+document.getElementById("pChild").onclick=()=>{if(selNode)addChild(selNode);};
+document.getElementById("pDelete").onclick=()=>{
+  if(selNode)delNode(selNode);
+  else if(selLink){state.links=state.links.filter(l=>l!==selLink);deselect();buildDOM();updatePositions();save();}
+};
+
+function addChild(parent){
+  const label=prompt("Text des neuen Knotens:","Neuer Knoten"); if(!label)return;
+  const id="n"+(nextId++)+"_"+Date.now();
+  const ang=Math.random()*Math.PI*2, r=120;
+  const grp=parent.id==="root"?nextColor():parent.group;
+  const node={id,label,group:grp,comment:"",x:(parent.x||0)+Math.cos(ang)*r,y:(parent.y||0)+Math.sin(ang)*r};
+  state.nodes.push(node);
+  state.links.push({source:parent.id,target:id,kind:"tree",comment:""});
+  computeDeg(); pinRoot();
+  state.nodes.forEach(n=>{ if(n.id!=="root"&&n!==node){n.fx=n.x;n.fy=n.y;} });
+  node.fx=null;node.fy=null;
+  sim.nodes(state.nodes); sim.force("link").links(state.links); sim.alpha(.6);
+  for(let i=0;i<140;i++) sim.tick();
+  node.fx=node.x; node.fy=node.y;
+  buildDOM(); updatePositions(); save();
+}
+function delNode(d){
+  if(d.id==="root"){alert("Der zentrale Knoten kann nicht gelöscht werden.");return;}
+  if(!confirm('„'+d.label+'" und seine Unterknoten löschen?'))return;
+  const dead=new Set([d.id]); let changed=true;
+  while(changed){changed=false;
+    state.links.forEach(l=>{const s=l.source.id||l.source,t=l.target.id||l.target;
+      if(l.kind==="tree"&&dead.has(s)&&!dead.has(t)){dead.add(t);changed=true;}});}
+  state.nodes=state.nodes.filter(n=>!dead.has(n.id));
+  state.links=state.links.filter(l=>!dead.has(l.source.id||l.source)&&!dead.has(l.target.id||l.target));
+  deselect(); buildDOM(); updatePositions(); save();
+}
+
+window.addEventListener("keydown",e=>{if(e.key==="Escape")deselect();});
+
+document.getElementById("addBtn").onclick=()=>addChild(selNode||state.nodes.find(n=>n.id==="root"));
+document.getElementById("resetBtn").onclick=()=>{
+  if(!confirm("Alle Änderungen verwerfen und Original wiederherstellen?"))return;
+  try{localStorage.removeItem(KEY);}catch(e){} state=JSON.parse(JSON.stringify(SEED));
+  state.nodes.forEach(n=>{n.x=n.y=undefined;}); deselect(); relayout(); centerRoot();};
+document.getElementById("fitBtn").onclick=centerRoot;
+
+function centerRoot(){
+  const r=state.nodes.find(n=>n.id==="root")||{x:0,y:0};
+  const xs=state.nodes.map(n=>n.x||0),ys=state.nodes.map(n=>n.y||0);
+  const span=Math.max(Math.max(...xs)-Math.min(...xs),Math.max(...ys)-Math.min(...ys))+240;
+  const k=Math.min(W()/span,H()/span,1.4);
+  svg.transition().duration(450).call(zoom.transform,
+    d3.zoomIdentity.translate(W()/2-k*(r.x||0),H()/2-k*(r.y||0)).scale(k));
+}
+
+let started=false;
+function startApp(){
+  if(started)return; started=true;
+  if(hasPositions){ computeDeg(); pinRoot(); state.nodes.forEach(n=>{n.fx=n.x;n.fy=n.y;});
+    buildDOM(); updatePositions(); }
+  else { relayout(); }
+  setTimeout(centerRoot,200);
+}
+
+// ---------- Passwortschutz ----------
+const PW="NicoTici";
+const gate=document.getElementById("gate"), gpw=document.getElementById("gpw"),
+      gbtn=document.getElementById("gbtn"), gerr=document.getElementById("gerr");
+function tryPw(){
+  if(gpw.value===PW){ gate.style.display="none"; startApp(); }
+  else { gerr.textContent="Falsches Passwort"; gpw.value=""; gpw.focus(); }
+}
+gbtn.onclick=tryPw;
+gpw.addEventListener("keydown",e=>{if(e.key==="Enter")tryPw();});
+gpw.focus();
+</script>
+</body>
+</html>
