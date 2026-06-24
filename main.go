@@ -208,11 +208,9 @@ func handleLogin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
 		return
 	}
-	claims := jwt.MapClaims{
-		"sub": "admin",
-		"exp": time.Now().Add(24 * time.Hour).Unix(),
-	}
+	claims := jwt.MapClaims{"sub": "admin"}
 	token, _ := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(jwtKey)
+	http.SetCookie(w, &http.Cookie{Name: "token", Value: token, Path: "/", MaxAge: 86400 * 365 * 10, HttpOnly: true, SameSite: http.SameSiteLaxMode})
 	json.NewEncoder(w).Encode(map[string]string{"token": token})
 }
 
@@ -240,6 +238,8 @@ func handlePutState(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"db error"}`, http.StatusInternalServerError)
 		return
 	}
+	msg, _ := json.Marshal(map[string]string{"type": "state_changed"})
+	hub.broadcast <- msg
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -253,14 +253,25 @@ func handleStatic(w http.ResponseWriter, r *http.Request) {
 	w.Write(data)
 }
 
+func extractToken(r *http.Request) string {
+	auth := r.Header.Get("Authorization")
+	if strings.HasPrefix(auth, "Bearer ") {
+		return strings.TrimPrefix(auth, "Bearer ")
+	}
+	c, err := r.Cookie("token")
+	if err == nil {
+		return c.Value
+	}
+	return ""
+}
+
 func authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		auth := r.Header.Get("Authorization")
-		if !strings.HasPrefix(auth, "Bearer ") {
+		token := extractToken(r)
+		if token == "" {
 			http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
 			return
 		}
-		token := strings.TrimPrefix(auth, "Bearer ")
 		_, err := jwt.Parse(token, func(t *jwt.Token) (interface{}, error) {
 			return jwtKey, nil
 		})
@@ -273,7 +284,10 @@ func authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 }
 
 func handleWS(w http.ResponseWriter, r *http.Request) {
-	token := r.URL.Query().Get("token")
+	token := extractToken(r)
+	if token == "" {
+		token = r.URL.Query().Get("token")
+	}
 	_, err := jwt.Parse(token, func(t *jwt.Token) (interface{}, error) {
 		return jwtKey, nil
 	})
@@ -288,6 +302,8 @@ func handleWS(w http.ResponseWriter, r *http.Request) {
 	c := &Client{conn: conn, send: make(chan []byte, 256), id: genID()}
 	hub.register <- c
 	go c.writePump()
+	welcome, _ := json.Marshal(map[string]string{"type": "welcome", "id": c.id})
+	c.send <- welcome
 	go c.readPump()
 }
 
